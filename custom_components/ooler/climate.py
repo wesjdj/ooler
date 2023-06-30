@@ -55,13 +55,12 @@ async def async_setup_entry(
         "async_set_clean",
     )
 
-
 class Ooler(ClimateEntity, RestoreEntity):
     """Representation of Ooler Thermostat."""
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 1
     _attr_min_temp = DEFAULT_MIN_TEMP
     _attr_max_temp = DEFAULT_MAX_TEMP
@@ -109,14 +108,24 @@ class Ooler(ClimateEntity, RestoreEntity):
         return self._attr_target_temperature_step
 
     @property
-    def target_temperature(self) -> int | None:
+    def target_temperature(self) -> float | None:
         """Return the temperature we try to reach."""
-        return self._data.client.state.set_temperature
+        settemp_raw = self._data.client.state.set_temperature
+        if settemp_raw is not None:
+            # Convert the raw value from Fahrenheit to Celsius
+            settemp_celsius = (settemp_raw - 32) * 5/9
+            return settemp_celsius
+        return None
 
     @property
     def current_temperature(self) -> float | None:
         """Return the current temperature."""
-        return self._data.client.state.actual_temperature
+        actualtemp_raw = self._data.client.state.actual_temperature
+        if actualtemp_raw is not None:
+            # Assume the value is in Celsius as a non-decimal number
+            actualtemp_celsius = actualtemp_raw
+            return actualtemp_celsius
+        return None
 
     @property
     def fan_mode(self) -> str | None:
@@ -210,17 +219,25 @@ class Ooler(ClimateEntity, RestoreEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
-        temp = kwargs.get(ATTR_TEMPERATURE)
-        if temp is None:
+        temp_celsius = kwargs.get(ATTR_TEMPERATURE)
+        if temp_celsius is None:
             raise ValueError("No target temperature provided.")
-        if temp == self.target_temperature:
-            return
+        
+        # Convert the temperature from Celsius to Fahrenheit
+        temp_fahrenheit = (temp_celsius * 9/5) + 32
+        # Round to the nearest whole number and ensure it's an unsigned 8-bit integer
+        raw_value = round(temp_fahrenheit) & 0xFF
+        
+        _LOGGER.debug("Converted temperature to :%s Fahrenheit (raw value: %s)", temp_fahrenheit, raw_value)
+        
         client = self._data.client
         if not client.is_connected:
             _LOGGER.debug("Client not connected. Attempting to connect")
             await client.connect()
-        await client.set_temperature(int(temp))
-        _LOGGER.debug("Setting temperature to :%s", temp)
+        
+        # Send the rounded raw_value in Fahrenheit to the Ooler device
+        await client.set_temperature(raw_value)
+        _LOGGER.debug("Setting temperature to :%s Celsius in Home Assistant", temp_celsius)
 
     async def async_set_clean(self) -> None:
         """Start cleaning the unit."""
